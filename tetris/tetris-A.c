@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <time.h>
 
 #define CAPACIDADE_FILA 5
@@ -22,6 +23,22 @@ typedef struct {
 	int topo;
 } PilhaPecas;
 
+typedef enum {
+	ACAO_INVALIDA = 0,
+	ACAO_JOGAR,
+	ACAO_RESERVAR,
+	ACAO_USAR_RESERVADA,
+	ACAO_TROCAR,
+	ACAO_INVERTER
+} TipoAcao;
+
+typedef struct {
+	FilaPecas fila;
+	PilhaPecas pilha;
+	TipoAcao acao;
+	bool ativo;
+} HistoricoAcao;
+
 static Peca gerarPeca(void) {
 	static int proximoId = 0;
 	const char tipos[] = { 'I', 'O', 'T', 'L' };
@@ -30,6 +47,23 @@ static Peca gerarPeca(void) {
 	nova.nome = tipos[rand() % (int)(sizeof(tipos) / sizeof(tipos[0]))];
 	nova.id = proximoId++;
 	return nova;
+}
+
+static void salvarHistorico(HistoricoAcao *registro, const FilaPecas *fila, const PilhaPecas *pilha, TipoAcao acao) {
+	registro->fila = *fila;
+	registro->pilha = *pilha;
+	registro->acao = acao;
+	registro->ativo = true;
+}
+
+static int desfazerHistorico(HistoricoAcao *registro, FilaPecas *fila, PilhaPecas *pilha) {
+	if (!registro->ativo) {
+		return 0;
+	}
+	*fila = registro->fila;
+	*pilha = registro->pilha;
+	registro->ativo = false;
+	return 1;
 }
 
 static void inicializarFila(FilaPecas *fila) {
@@ -131,11 +165,94 @@ static void exibirPilha(const PilhaPecas *pilha) {
 	printf("\n");
 }
 
+static int jogarPeca(FilaPecas *fila, PilhaPecas *pilha, HistoricoAcao *historico) {
+	if (filaVazia(fila)) {
+		printf("Fila vazia. Nao ha peca para jogar.\n");
+		return 0;
+	}
+	salvarHistorico(historico, fila, pilha, ACAO_JOGAR);
+	Peca removida;
+	desenfileirar(fila, &removida);
+	printf("Peca jogada: [%c %d]\n", removida.nome, removida.id);
+	enfileirar(fila, gerarPeca());
+	return 1;
+}
+
+static int reservarPeca(FilaPecas *fila, PilhaPecas *pilha, HistoricoAcao *historico) {
+	if (pilhaCheia(pilha)) {
+		printf("Pilha cheia. Nao e possivel reservar.\n");
+		return 0;
+	}
+	if (filaVazia(fila)) {
+		printf("Fila vazia. Nao ha peca para reservar.\n");
+		return 0;
+	}
+	salvarHistorico(historico, fila, pilha, ACAO_RESERVAR);
+	Peca removida;
+	desenfileirar(fila, &removida);
+	empilhar(pilha, removida);
+	printf("Peca reservada: [%c %d]\n", removida.nome, removida.id);
+	enfileirar(fila, gerarPeca());
+	return 1;
+}
+
+static int usarPecaReservada(FilaPecas *fila, PilhaPecas *pilha, HistoricoAcao *historico) {
+	if (pilhaVazia(pilha)) {
+		printf("Pilha vazia. Nao ha peca reservada.\n");
+		return 0;
+	}
+	salvarHistorico(historico, fila, pilha, ACAO_USAR_RESERVADA);
+	Peca removida;
+	desempilhar(pilha, &removida);
+	printf("Peca reservada usada: [%c %d]\n", removida.nome, removida.id);
+	return 1;
+}
+
+static int trocarTopoComFrente(FilaPecas *fila, PilhaPecas *pilha, HistoricoAcao *historico) {
+	if (filaVazia(fila)) {
+		printf("Fila vazia. Nada para trocar.\n");
+		return 0;
+	}
+	if (pilhaVazia(pilha)) {
+		printf("Pilha vazia. Nada para trocar.\n");
+		return 0;
+	}
+	salvarHistorico(historico, fila, pilha, ACAO_TROCAR);
+	int indiceFila = fila->frente;
+	int indicePilha = pilha->topo - 1;
+	Peca temp = fila->itens[indiceFila];
+	fila->itens[indiceFila] = pilha->itens[indicePilha];
+	pilha->itens[indicePilha] = temp;
+	printf("Topo da pilha trocado com frente da fila.\n");
+	return 1;
+}
+
+static int inverterFilaComPilha(FilaPecas *fila, PilhaPecas *pilha, HistoricoAcao *historico) {
+	int quantidade = fila->tamanho < pilha->topo ? fila->tamanho : pilha->topo;
+	if (quantidade == 0) {
+		printf("Nao ha pares para inverter. Garanta pecas na fila e na pilha.\n");
+		return 0;
+	}
+	salvarHistorico(historico, fila, pilha, ACAO_INVERTER);
+	for (int i = 0; i < quantidade; i++) {
+		int indiceFila = (fila->frente + i) % CAPACIDADE_FILA;
+		int indicePilha = pilha->topo - 1 - i;
+		Peca temp = fila->itens[indiceFila];
+		fila->itens[indiceFila] = pilha->itens[indicePilha];
+		pilha->itens[indicePilha] = temp;
+	}
+	printf("%d par(es) de pecas foram invertidos entre fila e pilha.\n", quantidade);
+	return 1;
+}
+
 static void exibirMenu(void) {
 	printf("\nOpcoes de acao:\n");
 	printf("1 - Jogar peca\n");
 	printf("2 - Reservar peca\n");
 	printf("3 - Usar peca reservada\n");
+	printf("4 - Trocar topo da pilha com frente da fila\n");
+	printf("5 - Desfazer ultima jogada\n");
+	printf("6 - Inverter fila com pilha\n");
 	printf("0 - Sair\n");
 	printf("Escolha: ");
 }
@@ -143,6 +260,7 @@ static void exibirMenu(void) {
 int main(void) {
 	FilaPecas fila;
 	PilhaPecas pilha;
+	HistoricoAcao historico = {0};
 	int opcao = -1;
 	int i;
 
@@ -169,36 +287,35 @@ int main(void) {
 			continue;
 		}
 
-		if (opcao == 1) {
-			Peca removida;
-			if (desenfileirar(&fila, &removida)) {
-				printf("Peca jogada: [%c %d]\n", removida.nome, removida.id);
-				enfileirar(&fila, gerarPeca());
-			} else {
-				printf("Fila vazia. Nao ha peca para jogar.\n");
-			}
-		} else if (opcao == 2) {
-			Peca removida;
-			if (pilhaCheia(&pilha)) {
-				printf("Pilha cheia. Nao e possivel reservar.\n");
-			} else if (desenfileirar(&fila, &removida)) {
-				empilhar(&pilha, removida);
-				printf("Peca reservada: [%c %d]\n", removida.nome, removida.id);
-				enfileirar(&fila, gerarPeca());
-			} else {
-				printf("Fila vazia. Nao ha peca para reservar.\n");
-			}
-		} else if (opcao == 3) {
-			Peca removida;
-			if (desempilhar(&pilha, &removida)) {
-				printf("Peca reservada usada: [%c %d]\n", removida.nome, removida.id);
-			} else {
-				printf("Pilha vazia. Nao ha peca reservada.\n");
-			}
-		} else if (opcao == 0) {
-			printf("Saindo...\n");
-		} else {
-			printf("Opcao invalida.\n");
+		switch (opcao) {
+			case 1:
+				jogarPeca(&fila, &pilha, &historico);
+				break;
+			case 2:
+				reservarPeca(&fila, &pilha, &historico);
+				break;
+			case 3:
+				usarPecaReservada(&fila, &pilha, &historico);
+				break;
+			case 4:
+				trocarTopoComFrente(&fila, &pilha, &historico);
+				break;
+			case 5:
+				if (desfazerHistorico(&historico, &fila, &pilha)) {
+					printf("Ultima jogada desfeita.\n");
+				} else {
+					printf("Nao ha acao para desfazer.\n");
+				}
+				break;
+			case 6:
+				inverterFilaComPilha(&fila, &pilha, &historico);
+				break;
+			case 0:
+				printf("Saindo...\n");
+				break;
+			default:
+				printf("Opcao invalida.\n");
+				break;
 		}
 
 		if (opcao != 0) {
